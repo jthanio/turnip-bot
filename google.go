@@ -106,9 +106,9 @@ func googleMain() {
 
 	// Prints the names and majors of students in a sample spreadsheet:
 	// https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit
-	spreadsheetId := "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+	spreadsheetID := "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
 	readRange := "Class Data!A2:E"
-	resp, err := srv.Spreadsheets.Values.Get(spreadsheetId, readRange).Do()
+	resp, err := srv.Spreadsheets.Values.Get(spreadsheetID, readRange).Do()
 	if err != nil {
 		log.Fatalf("Unable to retrieve data from sheet: %v", err)
 	}
