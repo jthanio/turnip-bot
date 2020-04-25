@@ -1,18 +1,24 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
 	"strconv"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 )
 
-type config struct {
+type discordConf struct {
 	Token       string `json:"token"`
 	Permissions int    `json:"permissions"`
+}
+
+type config struct {
+	Discord discordConf `json:"discord"`
 }
 
 func loadToken() string {
@@ -28,7 +34,7 @@ func loadToken() string {
 	if err := decoder.Decode(&config); err != nil {
 		fmt.Println("could not read config: ", err)
 	}
-	return config.Token
+	return config.Discord.Token
 }
 
 func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
@@ -61,4 +67,16 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		s.MessageReactionAdd(m.ChannelID, m.ID, "🤖")
 		//s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Got sell price: %d", price))
 	}
+}
+
+func storeBuyPrice(db *sql.DB, userid string, day time.Time, isPMPrice bool) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+
+	day.Format("2006-01-02 15:04:05")
+	insertBuyPrice := `insert into turnips (userid, time, buy_price) values ($1, $2, $3)`
+	tx.Exec(insertBuyPrice, userid)
+	return nil
 }
