@@ -1,5 +1,8 @@
 # configuration
 config/*.json
 
+# db
+turnips.db
+
 # executible
 turnip-bot
