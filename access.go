@@ -197,8 +197,8 @@ func (a *TurnipAccess) CreateOrUpdateBuyPrice(weekID int, dayNum int, meridian s
 
 	// Check if the price is already provided and update if so
 	row := checkBuyPrice.QueryRow(weekID, dayNum, meridian)
-	var w priceObject
-	if err := row.Scan(&w); err != nil {
+	var id64 int64
+	if err := row.Scan(&id64); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// Prepare the query to insert the price
 			insertBuyPrice, err := a.db.Prepare(fmt.Sprintf(`INSERT INTO %s (%s, %s, %s, %s) VALUES (?, ?, ?, ?);`, sqlPriceTableName, sqlWeekID, sqlPriceDay, sqlPriceTime, sqlPriceSell))
@@ -231,11 +231,11 @@ func (a *TurnipAccess) CreateOrUpdateBuyPrice(weekID int, dayNum int, meridian s
 	}
 
 	// Run the prepared query
-	if _, err := updateBuyPrice.Exec(price, w.id); err != nil {
+	if _, err := updateBuyPrice.Exec(price, id64); err != nil {
 		return 0, err
 	}
 
-	return w.id, nil
+	return int(id64), nil
 }
 
 // GetOrCreateUser checks the db if the user exists or creates a new user if not. In both cases with no error, the user ID is returned.

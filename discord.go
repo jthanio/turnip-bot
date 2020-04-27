@@ -6,6 +6,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -48,6 +49,7 @@ func NewDiscordBot(access *TurnipAccess) (*DiscordBot, error) {
 		return nil, err
 	}
 
+	fmt.Println("turnip bot has started, awaiting messages")
 	return bot, nil
 }
 
@@ -106,7 +108,6 @@ func (d *DiscordBot) buyCommand(s *discordgo.Session, m *discordgo.MessageCreate
 	if err != nil {
 		return fmt.Errorf("unable to parse price: %w", err)
 	}
-	fmt.Println(fmt.Sprintf("got buy price %d", price))
 
 	// Parse date
 	messageCreateTime, err := snowflakeCreationTime(m.ID) // Get the day based on message creation time
@@ -117,11 +118,12 @@ func (d *DiscordBot) buyCommand(s *discordgo.Session, m *discordgo.MessageCreate
 	var weekdayNum int
 	day := dayArg.FindString(m.Content)
 	if day != "" {
-		weekday, err := time.Parse("Monday", day)
+		day = strings.Title(strings.ToLower(day)) // Capitalize first letter
+		weekday, err := parseWeekday(day)         // Get the numeric value of the weekday
 		if err != nil {
 			return err
 		}
-		weekdayNum = int(weekday.Weekday())
+		weekdayNum = int(weekday)
 	} else {
 		weekdayNum = int(messageCreateTime.Weekday()) // If no day provided, infer weekday from message create time
 	}
@@ -158,6 +160,7 @@ func (d *DiscordBot) buyCommand(s *discordgo.Session, m *discordgo.MessageCreate
 	}
 
 	s.MessageReactionAdd(m.ChannelID, m.ID, "🤖")
+	fmt.Println(fmt.Sprintf("got %s %s buy price %d for user %s", time.Weekday(weekdayNum).String(), meridian, price, m.Author.Username))
 	return nil
 }
 
@@ -188,7 +191,7 @@ func (d *DiscordBot) sellCommand(s *discordgo.Session, m *discordgo.MessageCreat
 		return fmt.Errorf("unable to create week for user: %w", err)
 	}
 
-	fmt.Println(fmt.Sprintf("got sell price %d", price))
+	fmt.Println(fmt.Sprintf("got sell price %d for user %s", price, m.Author.Username))
 	s.MessageReactionAdd(m.ChannelID, m.ID, "🤖")
 	return nil
 }
@@ -207,4 +210,22 @@ func snowflakeCreationTime(ID string) (t time.Time, err error) {
 	timestamp := (i >> 22) + 1420070400000
 	t = time.Unix(timestamp/1000, 0)
 	return
+}
+
+var daysOfWeek = map[string]time.Weekday{
+	"Sunday":    time.Sunday,
+	"Monday":    time.Monday,
+	"Tuesday":   time.Tuesday,
+	"Wednesday": time.Wednesday,
+	"Thursday":  time.Thursday,
+	"Friday":    time.Friday,
+	"Saturday":  time.Saturday,
+}
+
+func parseWeekday(v string) (time.Weekday, error) {
+	if d, ok := daysOfWeek[v]; ok {
+		return d, nil
+	}
+
+	return time.Sunday, fmt.Errorf("invalid weekday '%s'", v)
 }
