@@ -94,7 +94,7 @@ type weekObject struct {
 func getNearestSunday(day time.Time) (time.Time, error) {
 	wDay := day.Weekday()
 	if wDay != time.Sunday {
-		day.AddDate(0, 0, -int(wDay)) // Subtract days past Sunday to get most recent Sunday.
+		day = day.AddDate(0, 0, -int(wDay)) // Subtract days past Sunday to get most recent Sunday.
 	}
 
 	return day, nil
