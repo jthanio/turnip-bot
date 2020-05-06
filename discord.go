@@ -79,6 +79,7 @@ func (d *DiscordBot) messageCreateHook() func(s *discordgo.Session, m *discordgo
 
 		buyCmd := regexp.MustCompile(`^!buy\s*\d+\s*([mM]onday|[tT]uesday|[wW]ednesday|[tT]hursday|[fF]riday|[sS]aturday)?\s*(am|pm)?`)
 		sellCmd := regexp.MustCompile(`^!sell\s*\d+`)
+		chartCmd := regexp.MustCompile(`^!chart`)
 
 		switch {
 		case buyCmd.MatchString(m.Content):
@@ -91,6 +92,12 @@ func (d *DiscordBot) messageCreateHook() func(s *discordgo.Session, m *discordgo
 			err := d.sellCommand(s, m)
 			if err != nil {
 				fmt.Println("sell command: ", err)
+				return
+			}
+		case chartCmd.MatchString(m.Content):
+			err := d.chartCommand(s, m)
+			if err != nil {
+				fmt.Println("chart command: ", err)
 				return
 			}
 		}
@@ -115,31 +122,14 @@ func (d *DiscordBot) buyCommand(s *discordgo.Session, m *discordgo.MessageCreate
 		return fmt.Errorf("unable to get message timestamp: %w", err)
 	}
 
-	var weekdayNum int
-	day := dayArg.FindString(m.Content)
-	if day != "" {
-		day = strings.Title(strings.ToLower(day)) // Capitalize first letter
-		weekday, err := parseWeekday(day)         // Get the numeric value of the weekday
-		if err != nil {
-			return err
-		}
-		weekdayNum = int(weekday)
-	} else {
-		weekdayNum = int(messageCreateTime.Weekday()) // If no day provided, infer weekday from message create time
+	day := dayArg.FindString(m.Content)                      // Parse the day argument
+	weekdayNum, err := formatWeekday(day, messageCreateTime) // Get the day from the argument or messageCreateTime
+	if err != nil {
+		return err
 	}
 
 	// parse am/pm
 	meridian := meridianArg.FindString(m.Content)
-
-	if meridian == "" {
-		// If no am/pm provided, infer from message create time
-		switch {
-		case messageCreateTime.Hour() < 11:
-			meridian = "am"
-		case messageCreateTime.Hour() >= 11:
-			meridian = "pm"
-		}
-	}
 
 	// Check if user already exists
 	userID, err := d.access.GetOrCreateUser(m.Author.ID, m.Author.Username)
@@ -148,7 +138,7 @@ func (d *DiscordBot) buyCommand(s *discordgo.Session, m *discordgo.MessageCreate
 	}
 
 	// Check if week already exists
-	weekID, err := d.access.GetWeek(userID, messageCreateTime)
+	weekID, err := d.access.GetWeekForUser(userID, messageCreateTime)
 	if err != nil {
 		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("%s please provide your sell price for the week before posting buy prices.", m.Author.Mention()))
 		return fmt.Errorf("unable to get week for user: %w", err)
@@ -196,6 +186,36 @@ func (d *DiscordBot) sellCommand(s *discordgo.Session, m *discordgo.MessageCreat
 	return nil
 }
 
+func (d *DiscordBot) chartCommand(s *discordgo.Session, m *discordgo.MessageCreate) error {
+	// Parse date
+	messageCreateTime, err := snowflakeCreationTime(m.ID) // Get the day based on message creation time
+	if err != nil {
+		return fmt.Errorf("unable to get message timestamp: %w", err)
+	}
+
+	// Check if user already exists
+	userID, err := d.access.GetOrCreateUser(m.Author.ID, m.Author.Username)
+	if err != nil {
+		return fmt.Errorf("unable to get user registry: %w", err)
+	}
+
+	// Check if week already exists
+	weekID, err := d.access.GetWeekForUser(userID, messageCreateTime)
+	if err != nil {
+		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("%s you must provide your sell price for the week before a chart can be made.", m.Author.Mention()))
+		return fmt.Errorf("unable to get week for user: %w", err)
+	}
+
+	prices, err := d.access.GetBuyPricesForWeek(weekID)
+	if err != nil {
+		return fmt.Errorf("unable to buy prices for week: %w", err)
+	}
+
+	fmt.Println(prices)
+	s.MessageReactionAdd(m.ChannelID, m.ID, "🤖")
+	return nil
+}
+
 // Close closes the discord connections on the bot.
 func (d *DiscordBot) Close() error {
 	return d.dg.Close()
@@ -228,4 +248,17 @@ func parseWeekday(v string) (time.Weekday, error) {
 	}
 
 	return time.Sunday, fmt.Errorf("invalid weekday '%s'", v)
+}
+
+func formatWeekday(day string, referenceTime time.Time) (time.Weekday, error) {
+	if day == "" {
+		return referenceTime.Weekday(), nil // If no day provided, infer weekday from the reference time
+	}
+
+	day = strings.Title(strings.ToLower(day)) // Capitalize first letter
+	weekday, err := parseWeekday(day)         // Get the numeric value of the weekday
+	if err != nil {
+		return 0, err
+	}
+	return weekday, nil
 }

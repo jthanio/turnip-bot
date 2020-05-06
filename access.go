@@ -31,6 +31,29 @@ type TurnipAccess struct {
 	db *sql.DB
 }
 
+// Week represents the sell price for a given user on a specific week.
+type Week struct {
+	id         int
+	userID     int
+	startDay   string
+	startPrice int
+}
+
+// Price represents the many buy prices for a week.
+type Price struct {
+	id     int
+	weekID int
+	day    int
+	time   string
+	sell   int
+}
+
+// UserWeek contains all of the data for a user on a given week.
+type UserWeek struct {
+	SellPrice Price
+	BuyPrices []Price
+}
+
 // NewTurnipAccess creates a database access object for the turnip db.
 func NewTurnipAccess() (*TurnipAccess, error) {
 	access := &TurnipAccess{}
@@ -84,13 +107,6 @@ func (a *TurnipAccess) CreateTables() error {
 	return tx.Commit()
 }
 
-type weekObject struct {
-	id         int
-	userID     int
-	startDay   string
-	startPrice int
-}
-
 func getNearestSunday(day time.Time) (time.Time, error) {
 	wDay := day.Weekday()
 	if wDay != time.Sunday {
@@ -100,8 +116,8 @@ func getNearestSunday(day time.Time) (time.Time, error) {
 	return day, nil
 }
 
-// GetWeek checks the db if week exists. If one is found, then the weekID is returned
-func (a *TurnipAccess) GetWeek(userID int, day time.Time) (int, error) {
+// GetWeekForUser checks the db if week exists for the given userID. If one is found, then the weekID is returned.
+func (a *TurnipAccess) GetWeekForUser(userID int, day time.Time) (int, error) {
 	var err error
 	day, err = getNearestSunday(day)
 	if err != nil {
@@ -115,14 +131,60 @@ func (a *TurnipAccess) GetWeek(userID int, day time.Time) (int, error) {
 		return 0, err
 	}
 
-	// Check if the price is already provided and update if so
+	// Check if the week already exists
 	row := checkWeek.QueryRow(userID, sunday)
 	var id64 int64
 	if err := row.Scan(&id64); err != nil {
+		fmt.Println("error while checking for price")
 		return 0, err
 	}
 
 	return int(id64), nil
+}
+
+// GetWeekByID gets the week object matching the provided ID.
+func (a *TurnipAccess) GetWeekByID(weekID int) (Week, error) {
+	// Prepare the query to get the matching week
+	checkWeek, err := a.db.Prepare(fmt.Sprintf(`SELECT * FROM %s WHERE %s = ?;`, sqlWeekTableName, sqlWeekID))
+	if err != nil {
+		return Week{}, err
+	}
+
+	// Check if there is a matching week
+	row := checkWeek.QueryRow(weekID)
+	var week Week
+	if err := row.Scan(&week); err != nil {
+		return Week{}, err
+	}
+
+	return week, nil
+}
+
+// GetBuyPricesForWeek checks the db for all sell prices for a given week.
+func (a *TurnipAccess) GetBuyPricesForWeek(weekID int) ([]Price, error) {
+	// Prepare to statement for gettin week buy prices
+	getBuyPrices, err := a.db.Prepare(fmt.Sprintf(`SELECT * FROM %s WHERE %s = ?;`, sqlPriceTableName, sqlWeekID))
+	if err != nil {
+		return []Price{}, err
+	}
+
+	// Execute prepared statement for all matching rows
+	rows, err := getBuyPrices.Query(weekID)
+	if err != nil {
+		return []Price{}, err
+	}
+	defer rows.Close()
+	var prices []Price
+	for rows.Next() {
+		var price Price
+		scanErr := rows.Scan(&price.id, &price.weekID, &price.day, &price.time, &price.sell)
+		if scanErr != nil {
+			return []Price{}, fmt.Errorf("error while retrieving rows: %w", scanErr)
+		}
+		prices = append(prices, price) // Add the row to the list
+	}
+
+	return prices, nil
 }
 
 // CreateOrUpdateWeek checks the db if the week exists or creates a new week if not. In both cases with no error, the week ID is returned.
@@ -133,7 +195,7 @@ func (a *TurnipAccess) CreateOrUpdateWeek(userID int, day time.Time, price int) 
 	}
 	sunday := sundayTime.Format(timeFormat)
 
-	weekID, err := a.GetWeek(userID, day)
+	weekID, err := a.GetWeekForUser(userID, day)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// Prepare the query to insert the price
@@ -173,21 +235,19 @@ func (a *TurnipAccess) CreateOrUpdateWeek(userID int, day time.Time, price int) 
 	return weekID, nil
 }
 
-type priceObject struct {
-	id     int
-	weekID int
-	day    int
-	time   string
-	sell   int
-}
-
 // CreateOrUpdateBuyPrice checks the db if the price exists or creates a new price if not.
 // If the price exists and the values are different, the price is updated.
-func (a *TurnipAccess) CreateOrUpdateBuyPrice(weekID int, dayNum int, meridian string, price int) (int, error) {
+func (a *TurnipAccess) CreateOrUpdateBuyPrice(weekID int, weekday time.Weekday, meridian string, price int) (int, error) {
 	// Validate the meridian string
 	if meridian != "am" && meridian != "pm" {
 		return 0, fmt.Errorf("string \"%s\" must be am or pm", meridian)
 	}
+
+	if weekday <= time.Sunday || weekday > time.Saturday {
+		return 0, fmt.Errorf("cannot create buy price for %s", weekday.String())
+	}
+
+	weekDayInt := int(weekday) // Cast the weekday to int
 
 	// Prepare the query to check if the price exists already
 	checkBuyPrice, err := a.db.Prepare(fmt.Sprintf(`SELECT %s FROM %s WHERE %s = ? AND %s = ? AND %s = ?;`, sqlPriceID, sqlPriceTableName, sqlWeekID, sqlPriceDay, sqlPriceTime))
@@ -196,7 +256,7 @@ func (a *TurnipAccess) CreateOrUpdateBuyPrice(weekID int, dayNum int, meridian s
 	}
 
 	// Check if the price is already provided and update if so
-	row := checkBuyPrice.QueryRow(weekID, dayNum, meridian)
+	row := checkBuyPrice.QueryRow(weekID, weekDayInt, meridian)
 	var id64 int64
 	if err := row.Scan(&id64); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -207,7 +267,7 @@ func (a *TurnipAccess) CreateOrUpdateBuyPrice(weekID int, dayNum int, meridian s
 			}
 
 			// Run the prepared query
-			res, err := insertBuyPrice.Exec(weekID, dayNum, meridian, price)
+			res, err := insertBuyPrice.Exec(weekID, weekDayInt, meridian, price)
 			if err != nil {
 				return 0, err
 			}
