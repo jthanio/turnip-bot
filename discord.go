@@ -28,6 +28,8 @@ type DiscordBot struct {
 	dg     *discordgo.Session
 }
 
+const chartBaseURL = "https://ac-turnip.com/share?f="
+
 // NewDiscordBot creates an active session for a discord bot.
 func NewDiscordBot(access *TurnipAccess) (*DiscordBot, error) {
 	token := loadToken()
@@ -138,14 +140,14 @@ func (d *DiscordBot) buyCommand(s *discordgo.Session, m *discordgo.MessageCreate
 	}
 
 	// Check if week already exists
-	weekID, err := d.access.GetWeekForUser(userID, messageCreateTime)
+	week, err := d.access.GetWeekForUser(userID, messageCreateTime)
 	if err != nil {
 		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("%s please provide your sell price for the week before posting buy prices.", m.Author.Mention()))
 		return fmt.Errorf("unable to get week for user: %w", err)
 	}
 
 	// Create or update the buy price
-	if _, err := d.access.CreateOrUpdateBuyPrice(weekID, weekdayNum, meridian, price); err != nil {
+	if _, err := d.access.CreateOrUpdateBuyPrice(week.ID, weekdayNum, meridian, price); err != nil {
 		return fmt.Errorf("unable to save buy for week: %w", err)
 	}
 
@@ -200,19 +202,19 @@ func (d *DiscordBot) chartCommand(s *discordgo.Session, m *discordgo.MessageCrea
 	}
 
 	// Check if week already exists
-	weekID, err := d.access.GetWeekForUser(userID, messageCreateTime)
+	week, err := d.access.GetWeekForUser(userID, messageCreateTime)
 	if err != nil {
 		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("%s you must provide your sell price for the week before a chart can be made.", m.Author.Mention()))
 		return fmt.Errorf("unable to get week for user: %w", err)
 	}
 
-	prices, err := d.access.GetBuyPricesForWeek(weekID)
+	prices, err := d.access.GetBuyPricesForWeek(week.ID)
 	if err != nil {
 		return fmt.Errorf("unable to buy prices for week: %w", err)
 	}
 
-	fmt.Println(prices)
 	s.MessageReactionAdd(m.ChannelID, m.ID, "🤖")
+	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Here is a chart of your prices so far this week: %s", getPriceURL(week.StartPrice, prices)))
 	return nil
 }
 
@@ -261,4 +263,38 @@ func formatWeekday(day string, referenceTime time.Time) (time.Weekday, error) {
 		return 0, err
 	}
 	return weekday, nil
+}
+
+func getPriceURL(sellPrice int, buyPrices []Price) string {
+	weekPrices := make([]string, 13) // One Sunday price and 2 prices for each other day of the week
+	for i := range weekPrices {
+		dayTime := i / 2
+		price := "0"
+		if i%2 == 1 { // Odd (morning price)
+			dayTime++ // Correct rounding
+			found, err := findPrice(buyPrices, "am", time.Weekday(dayTime))
+			if err == nil {
+				price = strconv.Itoa(found)
+			}
+		} else { // Even (pm price)
+			found, err := findPrice(buyPrices, "pm", time.Weekday(dayTime))
+			if err == nil {
+				price = strconv.Itoa(found)
+			}
+		}
+		weekPrices[i] = price // Assign the price if found
+	}
+	weekPrices[0] = strconv.Itoa(sellPrice) // Assign the Sunday price
+	fmt.Println("prices: ", weekPrices)
+
+	return chartBaseURL + strings.Join(weekPrices, "-")
+}
+
+func findPrice(prices []Price, time string, day time.Weekday) (int, error) {
+	for _, b := range prices {
+		if b.Day == day && b.Time == time {
+			return b.Sell, nil // Found the price
+		}
+	}
+	return 0, errors.New("no matching price found") // No price found
 }
